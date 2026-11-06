@@ -1,0 +1,26 @@
+extends:
+  - recommended
+
+rules:
+  no-ambiguous-paths:
+    severity: error
+  no-empty-servers:
+    severity: error
+  no-server-example.com:
+    severity: error
+  operation-operationId:
+    severity: error
+  operation-summary:
+    severity: error
+  operation-description:
+    severity: error
+  operation-4xx-response:
+    severity: error
+  security-defined:
+    severity: error
+  tags-alphabetical:
+    severity: error
+  info-license:
+    severity: error
+  info-contact:
+    severity: error

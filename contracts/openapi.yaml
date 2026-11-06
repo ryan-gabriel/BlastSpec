@@ -1,0 +1,1795 @@
+openapi: 3.1.0
+info:
+  title: BlastSpec API
+  version: 1.0.0
+  description: |
+    Canonical HTTP contract for BlastSpec — API Contract Change Impact Analyzer.
+
+    This file is the source of truth for the public API. Frontend types are generated
+    from it and CI fails when generated output drifts.
+
+    Conventions:
+    - Base path: `/api/v1`
+    - JSON fields use snake_case.
+    - IDs are UUIDv7 strings.
+    - Timestamps are ISO-8601 UTC.
+    - Errors use RFC 9457 `application/problem+json` with a stable `code`.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+  - url: https://api.blastspec.dev/api/v1
+    description: Demo deployment
+tags:
+  - name: Health
+  - name: Auth
+  - name: Services
+  - name: Specs
+  - name: Graph
+  - name: Consumer bindings
+  - name: Diffs
+  - name: Impact reports
+  - name: Tokens
+  - name: Webhooks
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Liveness and readiness
+      security: []
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Start a demo session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Session created; sets `blastspec_session` cookie
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: HTTP-only, SameSite=Lax session cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: End the current session
+      responses:
+        "204":
+          description: Session ended
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Get the current user and workspace
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /services:
+    get:
+      tags: [Services]
+      operationId: listServices
+      summary: List services
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Service"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Services]
+      operationId: createService
+      summary: Create a service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceCreate"
+            example:
+              name: billing
+              owner_team: Payments
+              repo_url: https://github.com/acme/billing
+              base_url: https://billing.internal.acme.dev
+      responses:
+        "201":
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /services/{serviceId}:
+    parameters:
+      - $ref: "#/components/parameters/ServiceId"
+    get:
+      tags: [Services]
+      operationId: getService
+      summary: Get a service
+      responses:
+        "200":
+          description: Service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Services]
+      operationId: updateService
+      summary: Update a service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceUpdate"
+      responses:
+        "200":
+          description: Updated service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /specs:
+    get:
+      tags: [Specs]
+      operationId: listSpecs
+      summary: List specs
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: service_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: Specs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Spec"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Specs]
+      operationId: uploadSpec
+      summary: Upload the first version of a spec
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file, service_id, version]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: OpenAPI 3.0.x/3.1.x document (JSON or YAML), max 5 MB
+                service_id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                  maxLength: 120
+                  description: Defaults to the OpenAPI `info.title`
+                version:
+                  type: string
+                  maxLength: 40
+                  description: Human label, for example `1.0.0`
+      responses:
+        "201":
+          description: Spec and first version created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpecDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /specs/{specId}:
+    parameters:
+      - $ref: "#/components/parameters/SpecId"
+    get:
+      tags: [Specs]
+      operationId: getSpec
+      summary: Get a spec with its current version and service
+      responses:
+        "200":
+          description: Spec
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpecDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Specs]
+      operationId: deleteSpec
+      summary: Soft-delete a spec
+      responses:
+        "204":
+          description: Spec deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /specs/{specId}/versions:
+    parameters:
+      - $ref: "#/components/parameters/SpecId"
+    get:
+      tags: [Specs]
+      operationId: listSpecVersions
+      summary: List spec versions, newest first
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SpecVersion"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Specs]
+      operationId: uploadSpecVersion
+      summary: Upload a new immutable version
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file, version]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: OpenAPI 3.0.x/3.1.x document (JSON or YAML), max 5 MB
+                version:
+                  type: string
+                  maxLength: 40
+      responses:
+        "201":
+          description: Version created and parsed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpecVersion"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /specs/{specId}/graph:
+    parameters:
+      - $ref: "#/components/parameters/SpecId"
+    get:
+      tags: [Graph]
+      operationId: getSpecGraph
+      summary: Get the dependency graph for a spec version
+      parameters:
+        - name: version_id
+          in: query
+          description: Defaults to the spec's current version.
+          schema:
+            type: string
+            format: uuid
+        - name: depth
+          in: query
+          description: Traversal depth for consumers; 0 means the full graph.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10
+            default: 0
+        - name: include_schemas
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Graph nodes and edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /specs/{specId}/graph/rebuild:
+    parameters:
+      - $ref: "#/components/parameters/SpecId"
+    post:
+      tags: [Graph]
+      operationId: rebuildSpecGraph
+      summary: Queue a full graph rebuild
+      responses:
+        "202":
+          description: Rebuild queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /consumer-bindings:
+    get:
+      tags: [Consumer bindings]
+      operationId: listConsumerBindings
+      summary: List consumer bindings
+      parameters:
+        - name: provider_service_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: consumer_service_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConsumerBinding"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+    post:
+      tags: [Consumer bindings]
+      operationId: createConsumerBinding
+      summary: Declare a manual consumer binding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsumerBindingCreate"
+      responses:
+        "201":
+          description: Binding created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsumerBinding"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /consumer-bindings/{bindingId}:
+    delete:
+      tags: [Consumer bindings]
+      operationId: deleteConsumerBinding
+      summary: Remove a manual consumer binding
+      parameters:
+        - name: bindingId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Binding removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /diffs:
+    post:
+      tags: [Diffs]
+      operationId: createDiff
+      summary: Start an asynchronous diff between two versions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContractDiffCreate"
+            example:
+              spec_id: 0192f3c4-1111-7abc-8def-0123456789ab
+              from_version_id: 0192f3c4-2222-7abc-8def-0123456789ab
+              to_version_id: 0192f3c4-3333-7abc-8def-0123456789ab
+      responses:
+        "202":
+          description: Diff queued
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractDiff"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /diffs/{diffId}:
+    parameters:
+      - $ref: "#/components/parameters/DiffId"
+    get:
+      tags: [Diffs]
+      operationId: getDiff
+      summary: Get diff status and summary
+      responses:
+        "200":
+          description: Diff
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContractDiff"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /diffs/{diffId}/changes:
+    parameters:
+      - $ref: "#/components/parameters/DiffId"
+    get:
+      tags: [Diffs]
+      operationId: listDiffChanges
+      summary: List detected changes
+      parameters:
+        - name: severity
+          in: query
+          schema:
+            $ref: "#/components/schemas/Severity"
+        - name: breaking
+          in: query
+          schema:
+            type: boolean
+        - name: method
+          in: query
+          schema:
+            type: string
+            enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE]
+        - name: path
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Changes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContractChange"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /impact-reports:
+    get:
+      tags: [Impact reports]
+      operationId: listImpactReports
+      summary: List impact reports
+      parameters:
+        - name: diff_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ImpactReportStatus"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ImpactReportSummary"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+    post:
+      tags: [Impact reports]
+      operationId: createImpactReport
+      summary: Start an asynchronous impact analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImpactReportCreate"
+      responses:
+        "202":
+          description: Report queued
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpactReportSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /impact-reports/{reportId}:
+    parameters:
+      - $ref: "#/components/parameters/ReportId"
+    get:
+      tags: [Impact reports]
+      operationId: getImpactReport
+      summary: Get a full impact report
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpactReport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /impact-reports/{reportId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ReportId"
+    post:
+      tags: [Impact reports]
+      operationId: approveImpactReport
+      summary: Approve a completed report
+      responses:
+        "200":
+          description: Approved report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpactReport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /tokens:
+    get:
+      tags: [Tokens]
+      operationId: listTokens
+      summary: List CI tokens (never returns plaintext)
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiToken"
+    post:
+      tags: [Tokens]
+      operationId: createToken
+      summary: Create a CI token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTokenCreate"
+      responses:
+        "201":
+          description: Token created; plaintext is returned once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenCreated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /tokens/{tokenId}:
+    delete:
+      tags: [Tokens]
+      operationId: revokeToken
+      summary: Revoke a CI token
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Token revoked
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /webhook-events:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookEvents
+      summary: List inbound CI webhook events
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/WebhookEventStatus"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WebhookEvent"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+
+  /webhooks/ci:
+    post:
+      tags: [Webhooks]
+      operationId: receiveCiWebhook
+      summary: Publish a spec version from CI
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-BlastSpec-Timestamp
+          in: header
+          required: true
+          description: Unix seconds or ISO-8601 UTC. Must be within 5 minutes of server time.
+          schema:
+            type: string
+        - name: X-BlastSpec-Signature
+          in: header
+          required: true
+          description: '`v1=<hex HMAC-SHA256>` over `timestamp + "." + raw_body` using the workspace webhook secret.'
+          schema:
+            type: string
+            pattern: "^v1=[a-f0-9]{64}$"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique per logical CI event. Reuse returns the original resources.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CiWebhookRequest"
+      responses:
+        "202":
+          description: Event accepted (including idempotent replays)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CiWebhookAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: blastspec_session
+      description: HTTP-only session cookie issued by `/auth/login`.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "bs_<prefix>_<secret>"
+      description: CI token. Scopes are checked server-side.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page.
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    ServiceId:
+      name: serviceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SpecId:
+      name: specId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DiffId:
+      name: diffId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ReportId:
+      name: reportId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, expired, or revoked credentials
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Authenticated but missing scope or workspace access
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Resource does not exist in this workspace
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: State conflict, duplicate, or idempotency mismatch
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationFailed:
+      description: Request validation or spec parsing failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PayloadTooLarge:
+      description: Upload exceeds 5 MB
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnsupportedMediaType:
+      description: Unsupported file type
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ServiceUnavailable:
+      description: A dependency (Postgres, Redis, Kuzu, graph service) is unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    Severity:
+      type: string
+      enum: [critical, warning, info]
+
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, trace_id]
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://blastspec.dev/errors/ERR-1204
+        title:
+          type: string
+          example: Spec could not be parsed
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        code:
+          type: string
+          pattern: "^ERR-[0-9]{4}$"
+          example: ERR-1204
+        trace_id:
+          type: string
+          example: 4f1c2a9e8b7d4c3a
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [pointer, message]
+      properties:
+        pointer:
+          type: string
+          description: RFC 6901 JSON pointer or request field path.
+          example: /paths/~1users/get/responses/200
+        message:
+          type: string
+        code:
+          type: string
+
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [next_cursor, has_more]
+      properties:
+        next_cursor:
+          type: [string, "null"]
+        has_more:
+          type: boolean
+
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, checks, version]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        version:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status, latency_ms]
+            properties:
+              status:
+                type: string
+                enum: [ok, degraded, down]
+              latency_ms:
+                type: number
+              detail:
+                type: string
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, workspace]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        workspace:
+          $ref: "#/components/schemas/Workspace"
+
+    Workspace:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+
+    Service:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, owner_team, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: billing
+        slug:
+          type: string
+          example: billing
+        owner_team:
+          type: string
+          example: Payments
+        repo_url:
+          type: [string, "null"]
+          format: uri
+        base_url:
+          type: [string, "null"]
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ServiceCreate:
+      type: object
+      additionalProperties: false
+      required: [name, owner_team]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+          pattern: "^[a-z0-9][a-z0-9-]*$"
+        owner_team:
+          type: string
+          minLength: 2
+          maxLength: 80
+        repo_url:
+          type: string
+          format: uri
+        base_url:
+          type: string
+          format: uri
+
+    ServiceUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        owner_team:
+          type: string
+          minLength: 2
+          maxLength: 80
+        repo_url:
+          type: [string, "null"]
+          format: uri
+        base_url:
+          type: [string, "null"]
+          format: uri
+
+    Spec:
+      type: object
+      additionalProperties: false
+      required: [id, service_id, name, slug, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        service_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        current_version_id:
+          type: [string, "null"]
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SpecDetail:
+      allOf:
+        - $ref: "#/components/schemas/Spec"
+        - type: object
+          required: [service, current_version, versions_count]
+          properties:
+            service:
+              $ref: "#/components/schemas/Service"
+            current_version:
+              oneOf:
+                - $ref: "#/components/schemas/SpecVersion"
+                - type: "null"
+            versions_count:
+              type: integer
+
+    SpecVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - spec_id
+        - version
+        - content_hash
+        - parse_status
+        - endpoint_count
+        - warning_count
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        spec_id:
+          type: string
+          format: uuid
+        version:
+          type: string
+          example: 2.0.0
+        content_hash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        openapi_version:
+          type: [string, "null"]
+          example: 3.1.0
+        parse_status:
+          type: string
+          enum: [parsed, parse_failed]
+        endpoint_count:
+          type: integer
+        warning_count:
+          type: integer
+        parse_error:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required: [id, type, label]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [Service, APIEndpoint, SchemaComponent, Consumer]
+        label:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required: [id, source, target, type]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+          enum: [PROVIDES, CONSUMES, DEPENDS_ON, REFERENCES]
+        data:
+          type: object
+          additionalProperties: true
+
+    GraphResponse:
+      type: object
+      additionalProperties: false
+      required: [spec_id, version_id, graph_version, stale, nodes, edges, warnings]
+      properties:
+        spec_id:
+          type: string
+          format: uuid
+        version_id:
+          type: string
+          format: uuid
+        graph_version:
+          type: string
+        stale:
+          type: boolean
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ConsumerBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - provider_service_id
+        - consumer_service_id
+        - method
+        - path
+        - source
+        - confidence
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider_service_id:
+          type: string
+          format: uuid
+        consumer_service_id:
+          type: string
+          format: uuid
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE]
+        path:
+          type: string
+          example: /users/{id}
+        source:
+          type: string
+          enum: [declared, inferred, manual]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        evidence:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    ConsumerBindingCreate:
+      type: object
+      additionalProperties: false
+      required: [provider_service_id, consumer_service_id, method, path]
+      properties:
+        provider_service_id:
+          type: string
+          format: uuid
+        consumer_service_id:
+          type: string
+          format: uuid
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE]
+        path:
+          type: string
+          pattern: "^/"
+
+    ContractDiffCreate:
+      type: object
+      additionalProperties: false
+      required: [spec_id, from_version_id, to_version_id]
+      properties:
+        spec_id:
+          type: string
+          format: uuid
+        from_version_id:
+          type: string
+          format: uuid
+        to_version_id:
+          type: string
+          format: uuid
+
+    ContractDiff:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - spec_id
+        - from_version_id
+        - to_version_id
+        - status
+        - engine_version
+        - summary
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        spec_id:
+          type: string
+          format: uuid
+        from_version_id:
+          type: string
+          format: uuid
+        to_version_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        engine_version:
+          type: string
+        summary:
+          $ref: "#/components/schemas/SeveritySummary"
+        error:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+
+    SeveritySummary:
+      type: object
+      additionalProperties: false
+      required: [critical, warning, info, total, breaking]
+      properties:
+        critical:
+          type: integer
+        warning:
+          type: integer
+        info:
+          type: integer
+        total:
+          type: integer
+        breaking:
+          type: boolean
+
+    ContractChange:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - diff_id
+        - fingerprint
+        - rule_id
+        - kind
+        - severity
+        - breaking
+        - description
+      properties:
+        id:
+          type: string
+          format: uuid
+        diff_id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        rule_id:
+          type: string
+          pattern: "^BR-[0-9]{3}$"
+          example: BR-001
+        kind:
+          type: string
+          example: operation_removed
+        severity:
+          $ref: "#/components/schemas/Severity"
+        breaking:
+          type: boolean
+        method:
+          type: [string, "null"]
+        path:
+          type: [string, "null"]
+        pointer:
+          type: [string, "null"]
+          example: /paths/~1users/get
+        before:
+          description: Canonical value before the change, or null.
+        after:
+          description: Canonical value after the change, or null.
+        description:
+          type: string
+
+    ImpactReportCreate:
+      type: object
+      additionalProperties: false
+      required: [diff_id]
+      properties:
+        diff_id:
+          type: string
+          format: uuid
+        change_ids:
+          type: array
+          description: Defaults to all breaking changes in the diff.
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+
+    ImpactReportStatus:
+      type: string
+      enum: [queued, running, completed, failed, approved]
+
+    ImpactReportSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - diff_id
+        - status
+        - graph_version
+        - summary
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        diff_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ImpactReportStatus"
+        graph_version:
+          type: [string, "null"]
+        summary:
+          $ref: "#/components/schemas/ImpactSummary"
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+        approved_at:
+          type: [string, "null"]
+          format: date-time
+
+    ImpactSummary:
+      type: object
+      additionalProperties: false
+      required: [affected_services, critical_changes, waves, cycles]
+      properties:
+        affected_services:
+          type: integer
+        critical_changes:
+          type: integer
+        waves:
+          type: integer
+        cycles:
+          type: integer
+
+    ImpactReport:
+      allOf:
+        - $ref: "#/components/schemas/ImpactReportSummary"
+        - type: object
+          required: [items, migration_waves, cycles, strategy]
+          properties:
+            strategy:
+              type: string
+              enum: [topological, coordinated, mixed]
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ImpactItem"
+            migration_waves:
+              type: array
+              items:
+                $ref: "#/components/schemas/MigrationWave"
+            cycles:
+              type: array
+              items:
+                $ref: "#/components/schemas/DependencyCycle"
+            approved_by:
+              type: [string, "null"]
+              format: uuid
+
+    ImpactItem:
+      type: object
+      additionalProperties: false
+      required:
+        - service_id
+        - service_name
+        - owner_team
+        - relation
+        - depth
+        - change_ids
+        - reason
+      properties:
+        service_id:
+          type: string
+          format: uuid
+        service_name:
+          type: string
+        owner_team:
+          type: string
+        relation:
+          type: string
+          enum: [provider, direct_consumer, transitive_consumer]
+        depth:
+          type: integer
+          minimum: 0
+        change_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        reason:
+          type: string
+          example: Consumes GET /users, which removed field `email`.
+
+    MigrationWave:
+      type: object
+      additionalProperties: false
+      required: [index, service_ids, service_names]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        service_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        service_names:
+          type: array
+          items:
+            type: string
+
+    DependencyCycle:
+      type: object
+      additionalProperties: false
+      required: [service_ids, service_names, reason]
+      properties:
+        service_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        service_names:
+          type: array
+          items:
+            type: string
+        recommended_break_service_id:
+          type: [string, "null"]
+          format: uuid
+        reason:
+          type: string
+
+    ApiToken:
+      type: object
+      additionalProperties: false
+      required: [id, name, prefix, scopes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+          example: bs_9f2c1a4b
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenScope"
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    ApiTokenCreate:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/TokenScope"
+
+    TokenScope:
+      type: string
+      enum: [specs:write, webhooks:write, reports:read]
+
+    ApiTokenCreated:
+      type: object
+      additionalProperties: false
+      required: [token, plaintext]
+      properties:
+        token:
+          $ref: "#/components/schemas/ApiToken"
+        plaintext:
+          type: string
+          description: Shown once and never retrievable again.
+          example: bs_9f2c1a4b_2f7c9e1d5a6b4c8e0f3a1d2c9b8e7f6a
+
+    WebhookEventStatus:
+      type: string
+      enum: [received, queued, processed, failed, duplicate]
+
+    WebhookEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - event_type
+        - idempotency_key
+        - status
+        - received_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          enum: [spec.published]
+        idempotency_key:
+          type: string
+        status:
+          $ref: "#/components/schemas/WebhookEventStatus"
+        spec_version_id:
+          type: [string, "null"]
+          format: uuid
+        diff_id:
+          type: [string, "null"]
+          format: uuid
+        report_id:
+          type: [string, "null"]
+          format: uuid
+        error:
+          type: [string, "null"]
+        received_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: [string, "null"]
+          format: date-time
+
+    CiWebhookRequest:
+      type: object
+      additionalProperties: false
+      required: [event_type, spec_id, version, spec]
+      properties:
+        event_type:
+          type: string
+          enum: [spec.published]
+        spec_id:
+          type: string
+          format: uuid
+        version:
+          type: string
+          maxLength: 40
+        spec:
+          type: object
+          additionalProperties: true
+          description: The full OpenAPI document as a JSON object.
+        analyze_impact:
+          type: boolean
+          default: true
+          description: When true and breaking changes exist, queue an impact report.
+
+    CiWebhookAccepted:
+      type: object
+      additionalProperties: false
+      required: [event_id, status, duplicate]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processed]
+        duplicate:
+          type: boolean
+        spec_version_id:
+          type: [string, "null"]
+          format: uuid
+        diff_id:
+          type: [string, "null"]
+          format: uuid
+        impact_report_id:
+          type: [string, "null"]
+          format: uuid
+
+    JobAccepted:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [queued]
+        job_id:
+          type: string
+          format: uuid
+        resource_id:
+          type: string
+          format: uuid
+
+security:
+  - sessionCookie: []

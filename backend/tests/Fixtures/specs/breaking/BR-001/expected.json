@@ -1,0 +1,14 @@
+{
+  "changes": [
+    {
+      "rule_id": "BR-001",
+      "kind": "operation_removed",
+      "severity": "critical",
+      "breaking": true,
+      "method": "GET",
+      "path": "/users",
+      "pointer": "/paths",
+      "description": "Removed GET /users operation."
+    }
+  ]
+}

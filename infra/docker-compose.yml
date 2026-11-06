@@ -1,0 +1,126 @@
+name: blastspec
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-blastspec}
+      POSTGRES_USER: ${DB_USERNAME:-blastspec}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-blastspec}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-blastspec} -d ${DB_DATABASE:-blastspec}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  graph-service:
+    build:
+      context: ../graph-service
+    environment:
+      KUZU_PATH: /data/kuzu
+      GRAPH_SERVICE_TOKEN: ${GRAPH_SERVICE_TOKEN:-dev-graph-token-change-me-32-chars-minimum-ok}
+      GRAPH_TIMEOUT_SECONDS: ${GRAPH_TIMEOUT_SECONDS:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8001:8001"
+    volumes:
+      - kuzu-data:/data/kuzu
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/internal/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+    env_file:
+      - ../.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      GRAPH_SERVICE_URL: http://graph-service:8001
+      GRAPH_SERVICE_TOKEN: ${GRAPH_SERVICE_TOKEN:-dev-graph-token-change-me-32-chars-minimum-ok}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      graph-service:
+        condition: service_healthy
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+
+  worker-relay:
+    build:
+      context: ../backend
+    env_file:
+      - ../.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      GRAPH_SERVICE_URL: http://graph-service:8001
+      GRAPH_SERVICE_TOKEN: ${GRAPH_SERVICE_TOKEN:-dev-graph-token-change-me-32-chars-minimum-ok}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["php", "artisan", "outbox:relay"]
+
+  worker-streams:
+    build:
+      context: ../backend
+    env_file:
+      - ../.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      GRAPH_SERVICE_URL: http://graph-service:8001
+      GRAPH_SERVICE_TOKEN: ${GRAPH_SERVICE_TOKEN:-dev-graph-token-change-me-32-chars-minimum-ok}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      graph-service:
+        condition: service_healthy
+    command: ["php", "artisan", "streams:consume", "graph", "diff", "impact", "webhook"]
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+  kuzu-data:

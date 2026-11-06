@@ -1,0 +1,53 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+.venv/
+dist/
+build/
+
+# Next.js / frontend
+.next/
+out/
+build/
+coverage/
+
+# Laravel
+storage/logs/*.log
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+vendor/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Databases
+*.sqlite3
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+
+# Load-test artifacts
+k6/*.txt
+k6/*-output.txt
+k6/*-error.txt
